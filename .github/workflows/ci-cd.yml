@@ -189,7 +189,7 @@ jobs:
       
       - name: Pull and test Docker image
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ steps.lowercase.outputs.IMAGE_NAME }}:${{ github.sha }}"
+          IMAGE="${{ env.REGISTRY }}/${{ steps.lowercase.outputs.IMAGE_NAME }}:latest"
           echo "Pulling image: $IMAGE"
           
           # Pull the image we just built
