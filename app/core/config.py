@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     port: int = 8000
     
     # ML Model Settings
-    model_name: str = "resnet18"
+    model_name: str = "resnet18"  # Options: resnet18, resnet50, resnet101, efficientnet_b2
     model_device: Optional[str] = None  # None = auto-detect (CUDA if available)
     
     # Logging

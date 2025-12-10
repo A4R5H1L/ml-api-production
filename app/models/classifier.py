@@ -82,17 +82,17 @@ class ImageClassifier:
     
     def _load_model(self):
         """
-        Load the pre-trained ResNet-18 model.
+        Load the pre-trained model.
         
         This method is called lazily on first prediction to optimize
         startup time. The model is loaded only when needed.
         """
         if self.model is None:
-            logger.info("Loading ResNet-18 model...")
-            # Load pre-trained ResNet-18
-            self.model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
-            self.model.to(self.device)
-            self.model.eval()  # Set to evaluation mode
+            from app.models.model_config import ModelConfig
+            from app.core.config import settings
+            
+            logger.info(f"Loading {settings.model_name} model...")
+            self.model = ModelConfig.get_model(settings.model_name, self.device)
             logger.info("Model loaded successfully")
     
     def preprocess_image(self, image: Image.Image) -> torch.Tensor:
