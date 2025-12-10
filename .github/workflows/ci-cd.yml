@@ -266,11 +266,12 @@ jobs:
           gcloud run deploy ml-api \
             --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/ml-api:latest \
             --platform managed \
-            --region us-central1 \
+            --region europe-north1 \
             --allow-unauthenticated \
             --project ${{ secrets.GCP_PROJECT_ID }} \
             --memory 2Gi \
             --cpu 2 \
+            --timeout 300 \
             --min-instances 0 \
             --max-instances 5 \
             --set-env-vars MODEL_DEVICE=cpu,LOG_FORMAT=json,LOG_LEVEL=INFO
@@ -280,7 +281,7 @@ jobs:
         run: |
           URL=$(gcloud run services describe ml-api \
             --platform managed \
-            --region us-central1 \
+            --region europe-north1 \
             --project ${{ secrets.GCP_PROJECT_ID }} \
             --format 'value(status.url)')
           echo "deployment_url=$URL" >> $GITHUB_OUTPUT
