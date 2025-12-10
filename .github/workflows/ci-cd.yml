@@ -246,12 +246,24 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
       
       - name: Configure Docker for GCR
-        run: gcloud auth configure-docker ${{ env.REGISTRY }}
+        run: gcloud auth configure-docker gcr.io
+      
+      - name: Tag and push image to GCR
+        run: |
+          # Pull from GHCR
+          docker pull ${{ env.REGISTRY }}/${{ steps.lowercase.outputs.IMAGE_NAME }}:latest
+          
+          # Tag for GCR
+          docker tag ${{ env.REGISTRY }}/${{ steps.lowercase.outputs.IMAGE_NAME }}:latest \
+            gcr.io/${{ secrets.GCP_PROJECT_ID }}/ml-api:latest
+          
+          # Push to GCR
+          docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/ml-api:latest
       
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy ml-api \
-            --image ${{ env.REGISTRY }}/${{ steps.lowercase.outputs.IMAGE_NAME }}:latest \
+            --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/ml-api:latest \
             --platform managed \
             --region us-central1 \
             --allow-unauthenticated \
