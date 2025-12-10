@@ -65,9 +65,19 @@ class ImageClassifier:
         Returns:
             List of 1000 ImageNet class labels
         """
-        # Simple class labels for ImageNet (1000 classes)
-        # In production, you'd load this from a file
-        # For now, returning generic labels
+        try:
+            # Try to load from imagenet_classes.txt
+            import os
+            label_file = os.path.join(os.path.dirname(__file__), '..', '..', 'imagenet_classes.txt')
+            if os.path.exists(label_file):
+                with open(label_file, 'r') as f:
+                    labels = [line.strip() for line in f.readlines()]
+                    if len(labels) == 1000:
+                        return labels
+        except Exception as e:
+            logger.warning(f"Could not load ImageNet labels from file: {e}")
+        
+        # Fallback: return generic labels
         return [f"class_{i}" for i in range(1000)]
     
     def _load_model(self):
