@@ -4,6 +4,14 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# GCP Credentials - NEVER COMMIT THESE
+*.json
+!package.json
+key.json
+gcp-key.json
+service-account*.json
+credentials*.json
 build/
 develop-eggs/
 dist/
