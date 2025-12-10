@@ -8,21 +8,23 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
-  DOCKER_IMAGE_NAME: ml-api
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   # ============================================
   # CODE QUALITY & LINTING
   # ============================================
   code-quality:
-    name: Code Quality Checks
+    name: Code Quality
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
       
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
@@ -32,81 +34,56 @@ jobs:
           python -m pip install --upgrade pip
           pip install flake8 black isort
       
-      - name: Run Black (formatting check)
-        run: black --check --diff app tests
-        continue-on-error: true
+      - name: Check formatting with Black
+        run: black --check --diff app tests || true
       
-      - name: Run isort (import sorting check)
-        run: isort --check-only --diff app tests
-        continue-on-error: true
+      - name: Check import sorting with isort
+        run: isort --check-only --diff app tests || true
       
-      - name: Run flake8 (linting)
+      - name: Lint with flake8
         run: |
-          # Stop on syntax errors or undefined names
+          # Critical errors only (syntax, undefined names)
           flake8 app tests --count --select=E9,F63,F7,F82 --show-source --statistics
-          # Check complexity and style (warnings only)
+          # Style warnings (non-blocking)
           flake8 app tests --count --max-complexity=15 --max-line-length=127 --statistics --exit-zero
-        continue-on-error: true
 
   # ============================================
   # UNIT & INTEGRATION TESTS
   # ============================================
   test:
-    name: Run Tests
+    name: Tests
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.11']
     
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
       
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-      
-      - name: Cache PyTorch
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/torch
-          key: ${{ runner.os }}-torch-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-torch-
       
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
       
-      - name: Run pytest with coverage
+      - name: Run tests with pytest
         run: |
-          pytest \
+          pytest tests/ \
             --cov=app \
             --cov-report=xml \
             --cov-report=term-missing \
-            --cov-report=html \
             -v \
-            --tb=short \
-            --strict-markers
+            --tb=short
       
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
-          flags: unittests
-          name: codecov-${{ matrix.python-version }}
-        continue-on-error: true
-      
-      - name: Archive test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: |
-            coverage.xml
-            htmlcov/
+          fail_ci_if_error: false
+          verbose: true
 
   # ============================================
   # SECURITY SCANNING
@@ -116,148 +93,163 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
       
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-        continue-on-error: true
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
 
   # ============================================
-  # DOCKER BUILD & TEST
+  # DOCKER BUILD & PUSH
   # ============================================
-  docker-build:
-    name: Build & Test Docker Image
+  docker:
+    name: Docker Build
     runs-on: ubuntu-latest
-    needs: [test, code-quality]
+    needs: [test]
+    permissions:
+      contents: read
+      packages: write
     
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
-      - name: Cache Docker layers
-        uses: actions/cache@v3
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
         with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Build Docker image
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile
-          push: false
-          load: true
-          tags: ${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }},${{ env.DOCKER_IMAGE_NAME }}:latest
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+  # ============================================
+  # INTEGRATION TEST (Docker)
+  # ============================================
+  docker-test:
+    name: Docker Integration Test
+    runs-on: ubuntu-latest
+    needs: [docker]
+    if: github.event_name != 'pull_request'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
       
-      - name: Test Docker image structure
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Pull and test Docker image
         run: |
-          # Verify image was built
-          docker images ${{ env.DOCKER_IMAGE_NAME }}:latest
+          # Pull the image we just built
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           
-          # Check image size (should be reasonable)
-          docker images --format "{{.Repository}}:{{.Tag}} - {{.Size}}" | grep ${{ env.DOCKER_IMAGE_NAME }}
-      
-      - name: Run container health check
-        run: |
-          # Start container in background
-          docker run -d --name ml-api-test -p 8000:8000 ${{ env.DOCKER_IMAGE_NAME }}:latest
+          # Start container
+          docker run -d --name ml-api-test -p 8000:8000 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           
           # Wait for startup
-          sleep 10
-          
-          # Check if container is running
-          docker ps | grep ml-api-test
+          echo "Waiting for container to start..."
+          sleep 15
           
           # Test health endpoint
-          curl --fail http://localhost:8000/health || (docker logs ml-api-test && exit 1)
+          echo "Testing health endpoint..."
+          curl -f http://localhost:8000/health || (docker logs ml-api-test && exit 1)
+          
+          # Test root endpoint
+          echo "Testing root endpoint..."
+          curl -f http://localhost:8000/ || (docker logs ml-api-test && exit 1)
+          
+          # Show success
+          echo "✅ Container tests passed!"
           
           # Cleanup
           docker stop ml-api-test
           docker rm ml-api-test
-      
-      - name: Move Docker cache
-        run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
   # ============================================
-  # BUILD SUMMARY
+  # PIPELINE SUMMARY
   # ============================================
-  build-summary:
-    name: Build Summary
+  summary:
+    name: Pipeline Summary
     runs-on: ubuntu-latest
-    needs: [code-quality, test, security, docker-build]
+    needs: [code-quality, test, security, docker]
     if: always()
     
     steps:
-      - name: Check build status
+      - name: Generate summary
         run: |
-          echo "✅ All CI/CD checks completed!"
-          echo "Code Quality: ${{ needs.code-quality.result }}"
-          echo "Tests: ${{ needs.test.result }}"
-          echo "Security: ${{ needs.security.result }}"
-          echo "Docker Build: ${{ needs.docker-build.result }}"
+          echo "## Pipeline Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Code Quality | ${{ needs.code-quality.result == 'success' && '✅' || '⚠️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tests | ${{ needs.test.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | ${{ needs.security.result == 'success' && '✅' || '⚠️' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker | ${{ needs.docker.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
 
   # ============================================
-  # DEPLOYMENT (GCP Cloud Run)
+  # DEPLOYMENT (GCP Cloud Run) - Uncomment when ready
   # ============================================
-  # Uncomment this section when ready to deploy
-  #
   # deploy:
-  #   name: Deploy to GCP Cloud Run
+  #   name: Deploy to Cloud Run
   #   runs-on: ubuntu-latest
-  #   needs: [docker-build]
+  #   needs: [docker-test]
   #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+  #   environment: production
   #   
   #   steps:
   #     - uses: actions/checkout@v4
   #     
   #     - name: Authenticate to Google Cloud
-  #       uses: google-github-actions/auth@v1
+  #       uses: google-github-actions/auth@v2
   #       with:
   #         credentials_json: ${{ secrets.GCP_SA_KEY }}
   #     
   #     - name: Set up Cloud SDK
-  #       uses: google-github-actions/setup-gcloud@v1
-  #     
-  #     - name: Configure Docker for GCR
-  #       run: gcloud auth configure-docker
-  #     
-  #     - name: Build and push to GCR
-  #       run: |
-  #         IMAGE=gcr.io/${{ secrets.GCP_PROJECT_ID }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }}
-  #         docker build -t $IMAGE .
-  #         docker push $IMAGE
+  #       uses: google-github-actions/setup-gcloud@v2
   #     
   #     - name: Deploy to Cloud Run
   #       run: |
-  #         gcloud run deploy ${{ env.DOCKER_IMAGE_NAME }} \
-  #           --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} \
+  #         gcloud run deploy ml-api \
+  #           --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
   #           --platform managed \
   #           --region us-central1 \
   #           --allow-unauthenticated \
   #           --memory 2Gi \
   #           --cpu 2 \
   #           --min-instances 0 \
-  #           --max-instances 10 \
-  #           --set-env-vars MODEL_DEVICE=cpu,LOG_FORMAT=json
-  #     
-  #     - name: Get deployment URL
-  #       run: |
-  #         URL=$(gcloud run services describe ${{ env.DOCKER_IMAGE_NAME }} \
-  #           --platform managed \
-  #           --region us-central1 \
-  #           --format 'value(status.url)')
-  #         echo "🚀 Deployed to: $URL"
-  #         echo "DEPLOYMENT_URL=$URL" >> $GITHUB_ENV
+  #           --max-instances 10

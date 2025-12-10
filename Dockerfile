@@ -1,54 +1,80 @@
-# Multi-stage Dockerfile for production deployment
-# Stage 1: Builder - Install dependencies and compile wheels
-FROM python:3.11-slim as builder
+# ==============================================================================
+# Multi-stage Dockerfile for ML API Production
+# ==============================================================================
+# Build optimizations:
+# - Multi-stage build to reduce final image size
+# - Wheel compilation in builder stage for faster installs
+# - Non-root user for security
+# - Minimal runtime dependencies
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Stage 1: Builder - Compile dependencies
+# ------------------------------------------------------------------------------
+FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
-# Install build dependencies
+# Install build tools required for compiling Python packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
+# Copy only requirements first (Docker layer caching optimization)
 COPY requirements.txt .
 
-# Install Python dependencies and create wheels
+# Create virtual environment and install dependencies
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip wheel --no-cache-dir --wheel-dir /build/wheels -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt
 
-# Stage 2: Runtime - Minimal production image
-FROM python:3.11-slim
+# ------------------------------------------------------------------------------
+# Stage 2: Runtime - Production image
+# ------------------------------------------------------------------------------
+FROM python:3.11-slim AS runtime
 
-# Set environment variables
+# Metadata
+LABEL maintainer="ML API Team" \
+      version="0.1.0" \
+      description="Production ML API for image classification"
+
+# Security and performance environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PYTHONFAULTHANDLER=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    # Application settings
+    MODEL_DEVICE=cpu \
+    LOG_LEVEL=INFO \
+    LOG_FORMAT=json
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && \
+# Create non-root user for security (best practice)
+RUN groupadd --gid 1000 appgroup && \
+    useradd --uid 1000 --gid appgroup --shell /bin/bash --create-home appuser && \
     mkdir -p /app && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appgroup /app
 
 WORKDIR /app
 
-# Copy wheels from builder stage
-COPY --from=builder /build/wheels /tmp/wheels
-COPY requirements.txt .
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
 
-# Install dependencies from wheels
-RUN pip install --no-cache-dir --no-index --find-links=/tmp/wheels -r requirements.txt && \
-    rm -rf /tmp/wheels
-
-# Copy application code
-COPY --chown=appuser:appuser ./app ./app
+# Copy application code (owned by non-root user)
+COPY --chown=appuser:appgroup ./app ./app
+COPY --chown=appuser:appgroup ./imagenet_classes.txt ./imagenet_classes.txt
 
 # Switch to non-root user
 USER appuser
 
-# Expose port
+# Expose application port
 EXPOSE 8000
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Health check for container orchestration
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+# Default command - production server
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
