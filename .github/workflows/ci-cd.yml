@@ -126,12 +126,6 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
         continue-on-error: true
-      
-      - name: Check for security issues in dependencies
-        run: |
-          pip install safety
-          safety check --file requirements.txt --output text || true
-        continue-on-error: true
 
   # ============================================
   # DOCKER BUILD & TEST
