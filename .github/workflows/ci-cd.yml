@@ -30,6 +30,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
       
+      - name: Cache PyTorch models
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/torch
+          key: ${{ runner.os }}-torch-models
+      
       - name: Run linting
         run: |
           pip install flake8
@@ -38,8 +44,11 @@ jobs:
         continue-on-error: true
       
       - name: Run tests with coverage
+        env:
+          TORCH_HOME: ${{ github.workspace }}/.torch_cache
+          MODEL_DEVICE: cpu
         run: |
-          pytest --cov=app --cov-report=xml --cov-report=term-missing -v
+          pytest --cov=app --cov-report=xml --cov-report=term-missing -v --tb=short
       
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
@@ -75,13 +84,22 @@ jobs:
           context: .
           file: ./Dockerfile
           push: false
+          load: true
           tags: ml-api:${{ github.sha }},ml-api:latest
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
       
       - name: Test Docker image
         run: |
+          # Verify image was built
           docker images ml-api:latest
+          # Test that container can start successfully
+          docker run --rm -d --name ml-api-test -p 8000:8000 ml-api:latest
+          sleep 10
+          # Container should be running
+          docker ps | grep ml-api-test
+          # Clean up
+          docker stop ml-api-test || true
       
       # Prevent cache from growing indefinitely
       - name: Move cache
