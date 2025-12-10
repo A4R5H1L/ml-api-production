@@ -1,5 +1,9 @@
 # ML Image Classification API
 
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104.1-009688.svg)](https://fastapi.tiangolo.com)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.5.1-EE4C2C.svg)](https://pytorch.org)
+
 A production-ready Machine Learning API for image classification built with **FastAPI** and **PyTorch**. This service uses a pre-trained ResNet-18 model to classify images into 1000 ImageNet categories with confidence scores.
 
 ## 🚀 Features
@@ -296,9 +300,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📝 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## 🙏 Acknowledgments
 
@@ -309,3 +311,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 📧 Contact
 
 For questions or feedback, please open an issue on GitHub.
+
+
